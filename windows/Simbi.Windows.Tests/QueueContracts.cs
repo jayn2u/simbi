@@ -27,8 +27,9 @@ internal static class QueueContracts
         AtomicFile.WriteJson(metadata, new PendingSegment("../../escape", 0, 1, "System audio")); File.WriteAllBytes(audio, [1, 2, 3]);
         try { await queue.DrainAsync(note.Folder); throw new Exception("Invalid queue metadata was accepted."); }
         catch (InvalidDataException) { }
-        if (!File.Exists(metadata) || handler.Calls != 2) throw new Exception("Invalid metadata modified or transmitted data.");
-        Console.WriteLine("PASS: invalid queue metadata is retained and rejected before upload");
+        if (File.Exists(metadata) || !File.Exists(Path.Combine(folder, TranscriptQueue.FailedFolder, "queued-1.json")) || handler.Calls != 2)
+            throw new Exception("Invalid metadata was lost, left blocking the queue, or transmitted.");
+        Console.WriteLine("PASS: invalid queue metadata is quarantined (kept) and rejected before upload");
 
         var store = new NoteStore(root);
         store.SaveText(note, "note.md", "external edit");

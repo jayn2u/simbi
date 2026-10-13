@@ -84,26 +84,82 @@ public sealed class TranscriptQueue(TranscriptionClient client)
         {
             var pending = Path.Combine(folder, ".simbi", "windows-pending");
             if (!Directory.Exists(pending)) return;
+            Exception? deferred = null;
             foreach (var path in Directory.GetFiles(pending, "*.json").OrderBy(File.GetCreationTimeUtc))
             {
                 token.ThrowIfCancellationRequested();
-                var item = JsonSerializer.Deserialize<PendingSegment>(File.ReadAllText(path), AtomicFile.Json)
-                    ?? throw new InvalidDataException("Invalid pending-segment metadata: " + Path.GetFileName(path));
-                // Never accept a path from queue metadata: the payload is paired by filename.
-                if (item.Id != Path.GetFileNameWithoutExtension(path)) throw new InvalidDataException("Pending-segment identifier does not match its file.");
                 var audio = Path.ChangeExtension(path, ".webm");
-                if (!Vtt.Read(folder).Any(c => c.Id == item.Id))
+                PendingSegment? item;
+                try
                 {
-                    status?.Invoke("Transcribing " + item.Speaker + "…");
-                    var text = await client.TranscribeAsync(audio, token);
-                    Vtt.Append(folder, new(item.Id, item.Start, item.End, item.Speaker, text));
+                    item = JsonSerializer.Deserialize<PendingSegment>(File.ReadAllText(path), AtomicFile.Json);
+                }
+                catch (JsonException) { item = null; }
+                // Never accept a path from queue metadata: the payload is paired by filename.
+                if (item == null || item.Id != Path.GetFileNameWithoutExtension(path))
+                {
+                    Quarantine(pending, path, audio, "invalid metadata");
+                    status?.Invoke("Skipped invalid pending segment " + Path.GetFileName(path));
+                    deferred ??= new InvalidDataException("Invalid pending-segment metadata was moved to " + FailedFolder + ": " + Path.GetFileName(path));
+                    continue;
+                }
+                var transcribed = Vtt.Read(folder).Any(c => c.Id == item.Id);
+                if (!transcribed && !File.Exists(audio))
+                {
+                    // Orphaned metadata would otherwise block every later segment forever.
+                    Quarantine(pending, path, audio, "missing audio");
+                    status?.Invoke("Skipped pending segment with missing audio");
+                    continue;
+                }
+                if (!transcribed)
+                {
+                    try
+                    {
+                        status?.Invoke("Transcribing " + item.Speaker + "…");
+                        var text = await client.TranscribeAsync(audio, token);
+                        Vtt.Append(folder, new(item.Id, item.Start, item.End, item.Speaker, text));
+                    }
+                    // Session/auth problems affect every item; stop and surface them without counting attempts.
+                    catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
+                    {
+                        if (RecordFailure(path) >= MaxAttempts)
+                        {
+                            Quarantine(pending, path, audio, ex.Message);
+                            status?.Invoke("Moved a repeatedly failing segment to " + FailedFolder);
+                        }
+                        // Keep draining later segments; report the first failure afterwards.
+                        deferred ??= ex;
+                        continue;
+                    }
                 }
                 // Commit transcript before queue removal. A crash here is idempotent on retry.
                 File.Delete(audio);
                 File.Delete(path);
+                File.Delete(AttemptsPath(path));
                 status?.Invoke("Transcript saved");
             }
+            if (deferred != null) throw deferred;
         }
         finally { gate.Release(); }
+    }
+    public const int MaxAttempts = 3;
+    public const string FailedFolder = "failed";
+    private static string AttemptsPath(string manifest) => Path.ChangeExtension(manifest, ".attempts");
+    private static int RecordFailure(string manifest)
+    {
+        var file = AttemptsPath(manifest);
+        var count = File.Exists(file) && int.TryParse(File.ReadAllText(file).Trim(), out var previous) ? previous + 1 : 1;
+        File.WriteAllText(file, count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return count;
+    }
+    // Quarantined items are kept (never deleted) under windows-pending/failed for manual recovery.
+    private static void Quarantine(string pending, string manifest, string audio, string reason)
+    {
+        var failed = Path.Combine(pending, FailedFolder);
+        Directory.CreateDirectory(failed);
+        foreach (var file in new[] { manifest, audio })
+            if (File.Exists(file)) File.Move(file, Path.Combine(failed, Path.GetFileName(file)), overwrite: true);
+        File.WriteAllText(Path.Combine(failed, Path.GetFileNameWithoutExtension(manifest) + ".reason.txt"), reason);
+        if (File.Exists(AttemptsPath(manifest))) File.Delete(AttemptsPath(manifest));
     }
 }

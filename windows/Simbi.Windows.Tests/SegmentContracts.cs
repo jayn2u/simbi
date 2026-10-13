@@ -25,6 +25,16 @@ internal static class SegmentContracts
         if (cue.Speaker != item.Speaker || Math.Abs(cue.Start - item.Start) > 0.001 || cue.Text != "Verified speech") throw new Exception("Captured speech did not become a matching cue.");
         Console.WriteLine("PASS: silence filtering, speech segmentation, source/timing metadata and end-to-end queued cue commit");
 
+        var orphanNote = new NoteStore(root).Create("Orphaned queue metadata");
+        var orphanQueue = PendingSegments.DirectoryFor(orphanNote.Folder); Directory.CreateDirectory(orphanQueue);
+        AtomicFile.WriteJson(Path.Combine(orphanQueue, "orphan.json"), new PendingSegment("orphan", 0, 1, "Microphone"));
+        AtomicFile.WriteJson(Path.Combine(orphanQueue, "later.json"), new PendingSegment("later", 1, 2, "Microphone"));
+        using (var output = new OpusWebM(Path.Combine(orphanQueue, "later.webm"))) output.Write(Enumerable.Repeat(frame, 20).SelectMany(f => f).ToArray());
+        await new TranscriptQueue(client).DrainAsync(orphanNote.Folder);
+        if (Vtt.Read(orphanNote.Folder).SingleOrDefault()?.Id != "later" || !File.Exists(Path.Combine(orphanQueue, TranscriptQueue.FailedFolder, "orphan.json")))
+            throw new Exception("Orphaned metadata blocked later segments or was not quarantined.");
+        Console.WriteLine("PASS: orphaned queue metadata is quarantined and later segments still transcribe");
+
         var staged = new PendingSegment("interrupted", 0, 1, "System audio");
         var pending = PendingSegments.DirectoryFor(note.Folder);
         AtomicFile.WriteJson(Path.Combine(pending, "interrupted.pending"), staged);
