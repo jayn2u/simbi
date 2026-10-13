@@ -11,8 +11,11 @@ public static class CodexLocator
     {
         if (!string.IsNullOrWhiteSpace(configured)) return File.Exists(configured) && configured.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
             ? configured : null;
-        var path = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
-            .Select(p => Path.Combine(p.Trim('"'), "codex.exe")).FirstOrDefault(File.Exists);
+        var path = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.Trim('"'))
+            // Relative PATH entries would resolve against the working directory; never launch from there.
+            .Where(Path.IsPathFullyQualified)
+            .Select(p => Path.Combine(p, "codex.exe")).FirstOrDefault(File.Exists);
         if (path != null) return path;
         var roots = new[]
         {
@@ -21,8 +24,7 @@ public static class CodexLocator
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "bin")
         };
         foreach (var root in roots)
-            foreach (var relative in new[] { "codex.exe", "app", "bin" })
-            { var candidate = Path.Combine(root, relative); if (File.Exists(candidate) && candidate.EndsWith(".exe")) return candidate; }
+            { var candidate = Path.Combine(root, "codex.exe"); if (File.Exists(candidate)) return candidate; }
         // The installed package location is Windows-managed metadata, not a hardcoded version.
         var packages = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps");
         if (Directory.Exists(packages))
@@ -124,7 +126,9 @@ public sealed class CodexClient : IAsyncDisposable
                 {
                     if (!id.TryGetInt32(out var number) || !pending.TryRemove(number, out var response)) continue;
                     if (root.TryGetProperty("error", out var error))
-                        response.TrySetException(new InvalidOperationException(error.GetProperty("message").GetString()));
+                        response.TrySetException(new InvalidOperationException(
+                            error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String
+                                ? text.GetString() : "Codex returned an error: " + error.GetRawText()));
                     else response.TrySetResult(root.GetProperty("result").Clone());
                 }
                 else if (root.TryGetProperty("method", out var method))
