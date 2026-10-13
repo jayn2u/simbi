@@ -24,6 +24,14 @@
 
 ![Simbi app window](assets/readme.png)
 
+## Windows native preview
+
+A separate native Windows app is available under [`windows/`](windows/README.md).
+It uses WPF/WASAPI for local notes, microphone and system-audio recording,
+playback, source-labelled transcripts and Codex integration. Build a
+self-contained Windows executable with `./windows/build.ps1` in PowerShell.
+See the Windows guide for the supported features and differences from macOS.
+
 Simbi is a free, open-source macOS app that records your microphone and system
 audio, identifies speakers locally, and builds a live transcript. When the
 recording ends, it turns the conversation into editable AI Notes with citations

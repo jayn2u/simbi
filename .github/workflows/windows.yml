@@ -1,0 +1,29 @@
+name: Windows native
+
+on:
+  push:
+    branches: [main]
+    paths: ['windows/**', '.github/workflows/windows.yml', 'LICENSE']
+  pull_request:
+    paths: ['windows/**', '.github/workflows/windows.yml', 'LICENSE']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.400'
+      - name: Build, contract tests and self-contained publish
+        shell: pwsh
+        run: ./windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Simbi-Windows-x64
+          path: windows/publish/win-x64/
+          if-no-files-found: error
