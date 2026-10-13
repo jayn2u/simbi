@@ -106,8 +106,7 @@ public partial class MainWindow : Window
             SaveLabel.Text = "Saved locally";
             ChatOutput.Text = "Ask a question about this note. Each question uses the current note and transcript.";
             RefreshAttachments(); RefreshTranscript(); OpenPlayback();
-            var state = Path.Combine(note.Folder, ".simbi", "windows-state.json");
-            SetStatus(recoveryWarning ?? (File.Exists(state) && File.ReadAllText(state).Contains("\"active\": true")
+            SetStatus(recoveryWarning ?? (RecordingStamp.WasInterrupted(note.Folder)
                 ? "Recovered a recording interrupted last time. Audio is preserved; press Record to resume." : "Opened " + note.Title));
         }
         finally { loading = false; UpdateControls(); }
@@ -204,7 +203,15 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { SetStatus(ex.Message); MessageBox.Show(this, ex.Message, "Recording could not start", MessageBoxButton.OK, MessageBoxImage.Information); }
     }
+    private int stopping;
     private async Task StopRecordingAsync(string? reason = null)
+    {
+        // Capture failures can fire repeatedly; only one stop may run at a time.
+        if (Interlocked.Exchange(ref stopping, 1) == 1) return;
+        try { await StopRecordingCoreAsync(reason); }
+        finally { Volatile.Write(ref stopping, 0); }
+    }
+    private async Task StopRecordingCoreAsync(string? reason)
     {
         RecordButton.IsEnabled = false;
         string? failure = reason;
@@ -371,7 +378,14 @@ public partial class MainWindow : Window
     {
         if (allowClose) return;
         e.Cancel = true;
-        if (closing || !SaveEdits()) return;
+        if (closing) return;
+        if (!SaveEdits())
+        {
+            // Never leave capture running because an edit could not be saved.
+            if (recording) await StopRecordingAsync();
+            if (MessageBox.Show(this, "Your latest edits could not be saved. Exit without saving them?", "Save needs attention",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        }
         closing = true; IsEnabled = false; lifetime.Cancel(); aiCancellation?.Cancel(); timer.Stop(); saveTimer.Stop();
         try { await capture.StopAsync(); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Recording save needs attention"); }

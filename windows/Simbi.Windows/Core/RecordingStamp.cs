@@ -10,6 +10,16 @@ public sealed record RecordingStamp(bool Active, double Seconds, long AudioLengt
         var audio = Path.Combine(folder, "audio.webm"); var file = new FileInfo(audio);
         AtomicFile.WriteJson(PathFor(folder), new RecordingStamp(active, seconds, file.Length, file.LastWriteTimeUtc.Ticks, OpusWebM.HeaderFingerprint(audio)));
     }
+    // True when the last session was still marked active, i.e. the app exited mid-recording.
+    public static bool WasInterrupted(string folder)
+    {
+        try
+        {
+            var path = PathFor(folder); if (!File.Exists(path)) return false;
+            return JsonSerializer.Deserialize<RecordingStamp>(File.ReadAllText(path), AtomicFile.Json)?.Active == true;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return false; }
+    }
     public static bool Matches(string folder)
     {
         try
