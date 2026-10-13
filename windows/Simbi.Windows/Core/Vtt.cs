@@ -50,6 +50,8 @@ public static class Vtt
         }
         return double.IsFinite(seconds) && seconds >= 0;
     }
+    // A blank line ends a WebVTT cue, so cue text must never contain one.
+    public static string CueText(string text) => Regex.Replace(text.Trim(), @"\r?\n\s*\n", "\n").Replace("\r\n", "\n");
     public static void Append(string folder, Cue cue)
     {
         lock (Gate)
@@ -58,7 +60,7 @@ public static class Vtt
             var path = Path.Combine(folder, "transcript.vtt");
             var text = File.Exists(path) ? File.ReadAllText(path).TrimEnd() : "WEBVTT";
             var speaker = WebUtility.HtmlEncode(cue.Speaker).Replace("\n", " ");
-            AtomicFile.Write(path, $"{text}\n\n{cue.Id}\n{Timestamp(cue.Start)} --> {Timestamp(cue.End)}\n<v {speaker}>{WebUtility.HtmlEncode(cue.Text)}</v>\n\n");
+            AtomicFile.Write(path, $"{text}\n\n{cue.Id}\n{Timestamp(cue.Start)} --> {Timestamp(cue.End)}\n<v {speaker}>{WebUtility.HtmlEncode(CueText(cue.Text))}</v>\n\n");
         }
     }
 }

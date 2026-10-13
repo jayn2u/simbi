@@ -19,6 +19,8 @@ public sealed class PcmRecording : IDisposable
             stream.ReadExactly(prefix);
             if (!prefix[..4].SequenceEqual("RIFF"u8) || !prefix[8..].SequenceEqual("WAVE"u8))
             { stream.Dispose(); throw new IOException("Recording is not a PCM WAV file."); }
+            // A crash can leave half a sample; realign data to 16-bit frames before appending.
+            stream.SetLength(44 + ((stream.Length - 44) & ~1L));
         }
         Checkpoint();
         stream.Position = stream.Length;

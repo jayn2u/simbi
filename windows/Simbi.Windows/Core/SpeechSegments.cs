@@ -102,8 +102,9 @@ public static class PendingSegments
                     else if (File.Exists(partial))
                     {
                         using (var repair = new OpusWebM(partial)) { }
-                        using var decoded = new WebMPlayback(partial);
-                        item = item with { End = Math.Min(item.End, item.Start + decoded.TotalTime.TotalSeconds) };
+                        // Dispose the reader before File.Move, or Windows reports a sharing violation.
+                        using (var decoded = new WebMPlayback(partial))
+                            item = item with { End = Math.Min(item.End, item.Start + decoded.TotalTime.TotalSeconds) };
                         File.Move(partial, audio);
                     }
                 }

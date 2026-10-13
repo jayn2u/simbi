@@ -37,6 +37,17 @@ try
         wave.Write(new short[960]);
     }
     Assert(new FileInfo(Path.Combine(root, "test.wav")).Length == 44 + 1920 * 2, "resumed WAV has correct length");
+    using (var torn = new FileStream(Path.Combine(root, "test.wav"), FileMode.Append)) torn.WriteByte(0x7f);
+    using (var wave = new PcmRecording(Path.Combine(root, "test.wav")))
+    {
+        Assert(wave.Samples == 1920, "crash-torn odd byte is dropped on reopen");
+        wave.Write(new short[] { 1 });
+    }
+    Assert(new FileInfo(Path.Combine(root, "test.wav")).Length == 44 + 1921 * 2, "appended samples stay 16-bit aligned after a torn write");
+    var blank = new Cue("segment-blank", 4, 5, "Microphone", "First line\n\n  \r\nSecond line");
+    Vtt.Append(note.Folder, blank);
+    Assert(Vtt.Read(note.Folder).Count == 2 && Vtt.Read(note.Folder).Single(c => c.Id == blank.Id).Text == "First line\nSecond line",
+        "blank lines inside cue text do not split the cue");
     var pcm = Enumerable.Range(0, 48000).Select(i => (short)(Math.Sin(i * 2 * Math.PI * 440 / 48000) * 10000)).ToArray();
     var webm = Path.Combine(root, "test.webm");
     using (var writer = new OpusWebM(webm)) writer.Write(pcm);
